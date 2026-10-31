@@ -1,5 +1,7 @@
 # 服务台 · ServiceHub
 
+> 仓库：<https://github.com/gui8912/ServiceHub>（私有）
+
 本机所有自建服务 / 小工具的**一个入口**：托盘常驻，浏览器里一张面板，逐个启停、看状态、开网页。
 从 PowerShell + WinForms 重写而来 —— 旧版一轮 WMI 扫描要 600–700ms，界面周期性假死；
 现在换成 Python + psutil + 网页界面，一轮采集约 50–60ms，接口只读缓存，实测 20ms 级返回。
@@ -30,10 +32,14 @@
 ### 换一台电脑（笔记本等）
 
 ```bat
-git clone <本仓库地址> "D:\Tools\服务台"
+git clone https://github.com/gui8912/ServiceHub.git "D:\Tools\服务台"
 cd /d "D:\Tools\服务台"
 启动服务台.bat
 ```
+
+> 仓库是私有的，第一次 clone 需要登录：用同一 GitHub 账号，密码处填 Personal Access Token
+> （Settings → Developer settings → Personal access tokens → 勾 `repo`）。登录一次后
+> Windows 凭据管理器会记住，后续 pull/push 不再询问。
 
 首次运行发现 `runtime\site-packages\psutil` 不存在，会自动调用 `setup-deps.bat`
 把 `psutil / pystray / Pillow` 装进工具自己的目录（需要本机有 Python 3.10+）。

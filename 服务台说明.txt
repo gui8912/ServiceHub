@@ -1,4 +1,4 @@
-﻿服务台 ServiceHub 2.1 —— 本机自建服务统一管理器（Python 版）
+﻿服务台 ServiceHub 2.2 —— 本机自建服务统一管理器（Python 版）
 ================================================================================
 
 【用途】
@@ -7,6 +7,8 @@
 即可，状态一目了然；有网页入口的服务，启动后会自动把浏览器打开。
 2026-10-31 由 PowerShell/WinForms 版整体替换为 Python + psutil + 浏览器界面；
 同日升级到 2.1：加设置面板、浏览器选择、明暗主题、卡片/列表双视图、版本号与更新时间。
+2.2：代码托管到 GitHub（笔记本可直接 clone）；新增本机差异层 services.local.json、
+路径失效时显示「未安装」、依赖自举 setup-deps.bat、解释器锁定 runtime\python.txt。
 详细原因见文末"为什么要换"。
 
 【怎么启动（随便挑一种）】
@@ -18,9 +20,14 @@
   诊断：跑 启动服务台.bat --selftest，报告落在 logs\selftest-report.txt
 
 【换一台电脑（笔记本）怎么装】
-  本目录已是一个 git 仓库，完整代码在 GitHub；笔记本上只要：
-     git clone <仓库地址> "D:\Tools\服务台"
+  本目录已是一个 git 仓库，完整代码在 GitHub（私有）：
+     https://github.com/gui8912/ServiceHub
+  笔记本上只要：
+     git clone https://github.com/gui8912/ServiceHub.git "D:\Tools\服务台"
      双击 启动服务台.bat
+  第一次 clone 要登录：用户名填 GitHub 账号，密码处填 Personal Access Token
+  （Settings → Developer settings → Personal access tokens → 勾 repo），
+  登录一次后由 Windows 凭据管理器记住。
   首次运行会自动检查依赖：runtime\site-packages 里没有 psutil 就调用 setup-deps.bat，
   用本机 Python 3.10+ 把 psutil / pystray / Pillow 装进 runtime\site-packages
   （不动系统 Python）。想单独装、看详细报错就双击 setup-deps.bat。
