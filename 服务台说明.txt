@@ -1,0 +1,173 @@
+﻿服务台 ServiceHub 2.1 —— 本机自建服务统一管理器（Python 版）
+================================================================================
+
+【用途】
+把近几个月在各个目录里攒下的自建服务、应用和运维脚本集中登记到一个常驻工作台：
+以后不用再去 D:\WorkBuddy 各个工作区里翻目录、双击脚本，在工作台上点"启动/停止"
+即可，状态一目了然；有网页入口的服务，启动后会自动把浏览器打开。
+2026-10-31 由 PowerShell/WinForms 版整体替换为 Python + psutil + 浏览器界面；
+同日升级到 2.1：加设置面板、浏览器选择、明暗主题、卡片/列表双视图、版本号与更新时间。
+详细原因见文末"为什么要换"。
+
+【怎么启动（随便挑一种）】
+  1. 桌面快捷方式「服务台」      —— 推荐，双击即可，自动打开控制台网页
+  2. D:\Tools\服务台\启动服务台.bat —— 同上，没有快捷方式时用
+  3. 浏览器直接开 http://127.0.0.1:9500/ —— 服务台已经在后台跑着时用它
+  4. svc list / svc start docscan / svc stop docscan —— 命令行版（给脚本、计划任务用，
+     详见 svc说明.txt，这条链路没动过）
+  诊断：跑 启动服务台.bat --selftest，报告落在 logs\selftest-report.txt
+
+【换一台电脑（笔记本）怎么装】
+  本目录已是一个 git 仓库，完整代码在 GitHub；笔记本上只要：
+     git clone <仓库地址> "D:\Tools\服务台"
+     双击 启动服务台.bat
+  首次运行会自动检查依赖：runtime\site-packages 里没有 psutil 就调用 setup-deps.bat，
+  用本机 Python 3.10+ 把 psutil / pystray / Pillow 装进 runtime\site-packages
+  （不动系统 Python）。想单独装、看详细报错就双击 setup-deps.bat。
+  · 解释器会被记到 runtime\python.txt，下次启动固定用同一个：psutil/Pillow 带
+    版本相关的二进制扩展，换小版本会 import 失败
+  · runtime\、logs\、apps\ 都不入库（各自机器生成），克隆下来是干净的
+  · services.json 里是台式机的绝对路径；笔记本上路径对不上的条目会显示灰色
+    「未安装」，不会假装「已停止」。只改本机差异时，把 services.local.example.json
+    复制成 services.local.json（已 gitignore，不会和仓库冲突）：
+      默认按 id 合并覆盖字段；"remove": [id...] 隐藏条目；"mode": "replace" 整份替换
+
+【文件清单】
+  ServiceHub.py          前台入口：装好各模块、选端口、起后台采集线程和托盘
+  启动服务台.bat          纯 ASCII 启动器（无 BOM / CRLF），负责拉起 pythonw
+  hub\
+    registry.py          services.json 读写与字段规范化（args 必须是数组）
+    monitor.py           状态采集：psutil 每 1 秒一轮快照，接口只读结果
+    actions.py           启动 / 停止 / 运行工具 / 打开网页 / 批量处理
+    browsers.py          发现已装浏览器（Edge/Chrome/ego/Firefox/360）并按选择打开
+    settings.py          设置模型：默认值、类型校验、原子落盘
+    meta.py              版本号与更新时间：注册表写了用写的，没写就从磁盘推断
+    server.py            HTTP 服务与 REST 接口（只听 127.0.0.1）
+    tray.py              系统托盘（pystray，缺了就自动降级为无托盘）
+    ui\                  网页界面（index.html / style.css / app.js，零框架零 CDN）
+  runtime\
+    site-packages\       psutil / pystray / Pillow（随工具自带，不动系统 Python）
+    settings.json        主题/视图/浏览器/刷新间隔/自动开网页等设置
+    port.txt / hub.pid   本次运行的实际端口与进程号（给启动器读）
+    _retarget_shortcut.py  桌面快捷方式重指向工具（不用 COM，见下文注意事项）
+  services.json          服务注册表 —— 新增/修改服务只动这个文件，不用改代码
+  services.local.example.json  本机差异层样例（复制成 services.local.json 生效，不入库）
+  setup-deps.bat         依赖安装（纯 ASCII / 无 BOM / CRLF），换电脑时跑一次
+  README.md              GitHub 首页说明（仓库地址、字段表、换机流程）
+  .gitignore / .gitattributes  仓库忽略规则与换行符规则（bat 必须 CRLF）
+  docs\                  界面截图（README 用）
+  svc.cmd / svc.ps1      命令行版入口（PowerShell 实现，仍未变动）
+  apps\                  各服务的目录联接（Junction，指向原目录，零拷贝）
+  logs\                  运行日志（服务台自身 + 每个服务自己的输出）
+  ServiceHub.ps1.legacy  旧 PowerShell/WinForms 版，留作回退，日常不再使用
+
+【界面怎么用】
+  · 两种视图，顶栏「卡片 / 列表」随时切换，选择会记住
+      卡片：一张卡一个服务，信息横向铺开，适合一眼扫状态
+      列表：一行一个服务，列为 服务 / 分组 / 版本号 / 更新时间 / 状态 / 端口 / 操作
+            点任意表头按该列排序，再点一次反向（▲/▼）；分组、状态各占一列，同一行看完
+  · 每张卡片/每行底部按钮
+      启动 / 停止 —— 常驻类服务；运行 —— 一次性脚本（体检、清理、注册表还原等）
+      打开网页    —— 没有网页入口的会置灰
+      查看日志    —— 该服务最近一次的输出（一次最多 300 行）
+  · 卡片下方固定显示「版本 x.x.x」「更新于 YYYY-MM-DD」
+      版本号来自 services.json 的 version 字段；没写的尝试从 package.json /
+      version.txt 推断，都没有就显示 —，不瞎编
+      更新时间默认取该目录里最新一次文件改动时间（改了代码不用回来改日期）
+  · 顶栏：视图切换 / 明暗主题 / 设置 / 刷新 / 全部启动 / 全部停止 / 退出
+      "全部启动"会跳过 services.json 里标了 autostart:false 的桌面 GUI 工具
+      （佳能扫描助手、NAPS2、视频号录制器、WeKnora 导入助手）——免得弹一堆窗口
+  · 工具栏：搜索框（名/说明/端口/版本/更新时间都搜）、分组筛选、右侧统计
+      （共几项 / 运行中 / 工具数 / 本轮扫描耗时）
+  · 状态颜色：绿=运行中，蓝=外部运行（不是工作台启动的），橙=启动中（进程已起、
+      端口未通），紫=一次性工具，灰=已停止
+  · 关掉浏览器标签页不会退出服务台，它仍在后台托管着各服务；
+      真正退出用网页右上角"退出"，或托盘图标右键"退出服务台"
+
+【设置面板（顶栏齿轮）】
+  外观
+    主题        跟随系统 / 明亮 / 暗色。跟随系统会随 Windows 明暗模式自动切换
+    默认视图    卡片 / 列表
+    自动刷新    每 1 / 2 / 5 / 10 秒，或暂停
+  行为
+    启动服务后自动打开网页    只对带网页入口的服务生效
+    打开网页用哪个浏览器      系统默认 / Microsoft Edge / Google Chrome / ego lite /
+                              Firefox / 360 安全浏览器 / 自定义路径
+                              列表是实时从注册表 Clients\StartMenuInternet 读的，
+                              装了新的自动出现，卸载了自动消失；也可直接填 exe 路径
+                              「用这个浏览器打开服务台」可当场验证选得对不对
+  关于
+    服务台版本、构建日期、端口、Python 版本、启动时间、服务数/运行数、扫描耗时、托盘
+    程序目录与日志目录；「查看服务台日志」「重读 services.json」两个快捷键
+  设置存在 runtime\settings.json（服务端），换浏览器/换机器打开都一致；
+  主题与视图同时会在浏览器本地记一份，避免首屏闪一下。
+  网址加参数可临时预览：?theme=dark / ?view=list，不写回设置。
+
+【工作台收录的服务（17 条）】
+  自建应用  澄文扫描台 8765 / 网课转字幕 7870 / 中文文件批量改名器（动态端口）
+  AI 与 OCR WeKnora 本机 OCR 8111
+  桌面工具  佳能扫描助手 / NAPS2 扫描仪 / 视频号录制器 / WeKnora 导入助手
+            （四者均 autostart:false，不参与全部启动）
+  维护工具  C盘空间体检 / C盘空间清理 / 锁定 Office 默认打开 / Office 默认打开状态 /
+            Office 关联立即修复 / 撤销 Office 关联锁定 / 备份 Normal.dotm 模板 /
+            Word 宏体检 / Word 宏一键修复
+  ※ Docker 容器已于 2026-10-31 按你的要求移出，需要时用 Docker Desktop 管理
+  ※ 有风险的动作在 services.json 里写了 confirm 提示（清 C 盘、撤销关联锁定、
+    Word 宏一键修复），网页点"运行"会先弹确认框
+
+【以后新增工具放哪】
+  · 能直接双击运行的成品工具，统一归到 D:\fnOS\WorkBuddy经验仓\06-Tools\<工具名>\
+  · 目录里自带 启动<工具名>.bat（纯 ASCII/CRLF/无 BOM）与 <简要功能>.txt（UTF-8 BOM）
+  · 归好后在 services.json 追加一条；或用 D:\Tools\_归档\归档工具.ps1 一键完成
+    （建目录 → 落位 → 生成启动器 → 生成说明 → 登记服务台）
+  · 服务台只认 services.json，不关心工具放在哪；路径带中文没问题
+
+【REST 接口（给脚本用，全部只听 127.0.0.1）】
+  GET  /api/status          全部服务状态（含 version/updated/state/portText/url）
+  GET  /api/settings        设置 + 已装浏览器 + 关于信息
+  GET  /api/logs?id=xxx     某个服务最近输出（id=__hub__ 看服务台自身日志）
+  POST /api/action          {id, action: start|stop|run|open, force?}
+  POST /api/batch           {action: start-all|stop-all}
+  POST /api/settings        改设置（只改传入字段，非法值会被纠正而不是照单全收）
+  POST /api/browser/test    用指定浏览器打开服务台
+  POST /api/reload          强制重读 services.json
+  POST /api/exit            退出服务台（不影响已启动的业务服务）
+  ★ 所有 POST 必须带请求头 X-ServiceHub: 1，否则返回 403。
+    这是防跨站用的：别的网站没法偷偷启停你本机的服务。
+
+【为什么要换（2026-10-31 那次改造的直接原因）】
+  ┌──────────────┬──────────────────────────┬─────────────────────────┐
+  │ 项目         │ 旧 PowerShell/WinForms   │ 新 Python + 网页        │
+  ├──────────────┼──────────────────────────┼─────────────────────────┤
+  │ 进程/端口扫描│ WMI 一轮约 600~700ms，   │ psutil 一轮约 50~60ms， │
+  │              │ 卡在界面定时器里就假死， │ 且在独立线程里跑，      │
+  │              │ 后来不得不加后台 Runspace│ /api/status 只读缓存，  │
+  │              │ 才勉强解决               │ 实测响应 20ms 上下      │
+  │ 点击可靠性   │ DataGridView 在托盘唤回  │ 浏览器事件，没有"首次点 │
+  │              │ 后首次点击会丢，打了补丁 │ 击丢失"这类消息泵坑     │
+  │ 动态端口     │ 就绪判定过早、日志块缓冲 │ 强制 PYTHONUNBUFFERED， │
+  │              │ 导致端口偶发抓不到       │ 未抓到端口前只报"启动中"│
+  │ 界面能力     │ WinForms 表格，改样式要改│ HTML/CSS 玻璃拟态，     │
+  │              │ 代码再重启              │ 明暗主题、响应式都现成  │
+  └──────────────┴──────────────────────────┴─────────────────────────┘
+
+【重要提醒】
+  1. 服务台网页只监听 127.0.0.1，局域网其他机器访问不到（这是有意的安全限制）
+  2. 起始端口 9500，被占用时自动往上找（9500-9519）；实际端口看 runtime\port.txt
+  3. 重复双击不会开出第二个工作台：检测到已有实例就直接复用它并打开网页
+  4. 退出服务台不等于关掉已启动的服务，它们继续跑；要全关就先点"全部停止"
+  5. 本机建 .lnk 的 COM 接口被安全策略拦过，桌面快捷方式是用
+     runtime\_retarget_shortcut.py 直接改字节的（保留原 IDList，改完按结构体回读
+     校验通过）；要恢复原样就把 runtime\DesktopShortcut-ServiceHub.lnk.bak
+     复制回桌面、改名「服务台.lnk」
+  6. 新增服务：编辑 services.json 追加一条即可，args 必须是数组（写成字符串会被逐字符
+     拆开）；改完不用重启工作台，最多 1 秒后就能在页面上看到
+  7. 首次运行不要用 open(path,'wb') 之类的方式改这些文件做"校验"，
+     历史上就是这么把 ServiceHub.ps1 截成 0 字节的
+
+【备份与回退建议】
+  · 回退到旧版：把 ServiceHub.ps1.legacy 改回 ServiceHub.ps1，再把桌面快捷方式还原
+    （备份在 runtime\DesktopShortcut-ServiceHub.lnk.bak 指向的就是旧 ps1）
+  · services.json 是全站唯一的注册表，D:\Tools 若有备份，优先保住这一个文件
+  · 依赖在 runtime\site-packages 里，整个 D:\Tools\服务台 目录拷走即可在别的机器上跑
+    （需要先装 Python 3.12；改 runtime 路径时同步改 启动服务台.bat 里的 PYDIR）

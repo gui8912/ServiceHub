@@ -1,0 +1,27 @@
+# 运行时产物（端口号、pid、日志、随工具自带的依赖）—— 每台机器自己生成
+runtime/
+logs/
+
+# 本机差异层：每台机器的工具路径不一样，绝不入库
+services.local.json
+
+# apps/ 下全是指向别处的目录联接（docscan、改名器…），内容属于各自项目
+apps/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# 快捷方式与备份文件
+*.lnk
+*.bak
+*.tmp
+# 旧 PowerShell/WinForms 版：只留在本机做回退参考，不进仓库
+*.legacy

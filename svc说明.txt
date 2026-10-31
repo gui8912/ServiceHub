@@ -1,0 +1,38 @@
+﻿服务台命令行 svc —— 脚本与计划任务专用
+================================================================================
+
+【用途】
+服务台（ServiceHub）图形界面是给人用的；本命令行入口是给机器用的 ——
+计划任务、其它脚本、批处理都能直接调它启停服务、查状态、开网页。
+两者共用同一份 services.json，改一处两边都生效。
+
+【文件清单】
+  svc.cmd       命令行入口（纯 ASCII 启动器）
+  svc.ps1       主程序
+  svc说明.txt   本说明
+
+【使用方法】
+  svc list                    列出全部服务及当前状态
+  svc status <id>             查看某个服务的状态/端口/地址
+  svc start  <id>             启动服务（带端口的会等端口就绪再返回）
+  svc stop   <id>             停止服务
+  svc open   <id>             打开服务网页
+
+  id 见 svc list 的第一列，例如：
+    svc start docscan
+    svc start asr-pipeline
+    svc stop  weknora-app
+    svc open  weknora-frontend
+
+【与图形界面的分工】
+  · 图形界面：看得见状态、点按钮、启动后自动开网页，适合日常手动操作
+  · 命令行  ：可编排、可放进计划任务、适合脚本串联
+  · 两边都直接改 services.json，互不干扰
+
+【重要提醒】
+  1. svc stop 依赖服务在注册表里的 marker 特征匹配命令行来结束进程；
+     没有 marker 的服务请在图形界面里停止。
+  2. svc start 启动的进程不随 svc 命令退出而结束（后台运行），这正是
+     服务该有的行为；要停请用 svc stop 或图形界面的"停止"。
+  3. 在计划任务里调用时建议用完整路径：
+     "D:\Tools\服务台\svc.cmd" start docscan

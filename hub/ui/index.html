@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>服务台 · 本地服务一键启停</title>
+<script>
+/* 首屏防闪：先把上次用的主题套上，等接口回来再以服务器设置为准 */
+(function () {
+  try {
+    var forced = (location.search.match(/[?&]theme=(light|dark)/) || [])[1];
+    var t = forced || localStorage.getItem('hub.theme') || 'system';
+    if (t === 'system') {
+      t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+})();
+</script>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="backdrop" aria-hidden="true">
+  <span class="blob b1"></span>
+  <span class="blob b2"></span>
+  <span class="blob b3"></span>
+  <span class="grain"></span>
+</div>
+
+<header class="topbar glass">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+           stroke-width="2.1" stroke-linecap="round">
+        <path d="M12 3v8"></path>
+        <path d="M6.6 6.6a8 8 0 1 0 10.8 0"></path>
+      </svg>
+    </span>
+    <div class="brandText">
+      <h1>服务台</h1>
+      <p class="sub" id="hubMeta">正在连接…</p>
+    </div>
+  </div>
+
+  <div class="topActions">
+    <div class="seg" id="viewSeg" role="group" aria-label="视图切换">
+      <button type="button" class="segBtn" data-view="card" title="卡片视图">卡片</button>
+      <button type="button" class="segBtn" data-view="list" title="列表视图">列表</button>
+    </div>
+    <button type="button" class="iconBtn" id="btnTheme" title="切换明亮 / 暗色">
+      <svg class="icoSun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"></circle>
+        <path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"></path>
+      </svg>
+      <svg class="icoMoon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round"><path d="M20 14.5A8.2 8.2 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"></path>
+      </svg>
+    </button>
+    <button type="button" class="iconBtn" id="btnSettings" title="设置">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.3-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4.1a2 2 0 1 1 4 0A1.7 1.7 0 0 0 16.9 5l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4z"></path>
+      </svg>
+    </button>
+    <span class="divider" aria-hidden="true"></span>
+    <button type="button" class="btn" id="btnRefresh" title="立刻刷新状态">刷新</button>
+    <button type="button" class="btn primary" id="btnStartAll">全部启动</button>
+    <button type="button" class="btn danger" id="btnStopAll">全部停止</button>
+    <button type="button" class="btn ghost" id="btnExit" title="关掉服务台网页，已启动的服务不受影响">退出</button>
+  </div>
+</header>
+
+<section class="toolbar">
+  <div class="searchWrap">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle>
+      <path d="M16.5 16.5L21 21"></path></svg>
+    <input type="search" id="searchBox" placeholder="搜索名称 / 说明 / 端口 / 版本…" autocomplete="off">
+  </div>
+  <div class="chips" id="groupChips"></div>
+  <div class="stats" id="stats"></div>
+</section>
+
+<main id="content" class="content"></main>
+
+<div id="toasts" class="toasts"></div>
+
+<div class="modalMask" id="modalMask" hidden>
+  <div class="modal glass" id="modal" role="dialog" aria-modal="true">
+    <div class="modalHead">
+      <h2 id="modalTitle">标题</h2>
+      <button type="button" class="iconBtn" id="modalClose" aria-label="关闭">×</button>
+    </div>
+    <div class="modalBody" id="modalBody"></div>
+    <div class="modalFoot" id="modalFoot" hidden></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

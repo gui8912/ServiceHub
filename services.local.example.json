@@ -1,0 +1,15 @@
+{
+  "note": "把本文件复制成 services.local.json 即可生效（该文件不入库，不会和仓库冲突）。默认按 id 合并：同 id 只覆盖写出来的字段，新 id 追加；remove 里的 id 会被隐藏；写 \"mode\": \"replace\" 则整份清单改用本文件的。",
+  "remove": [
+    "wxlive",
+    "scanapp"
+  ],
+  "services": [
+    {
+      "id": "docscan",
+      "exe": "D:\\Tools\\服务台\\apps\\docscan\\app.py",
+      "cwd": "D:\\Tools\\服务台\\apps\\docscan",
+      "desc": "在本机改了路径的条目，只写要覆盖的字段就行"
+    }
+  ]
+}
