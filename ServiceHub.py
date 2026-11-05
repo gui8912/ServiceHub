@@ -105,6 +105,9 @@ def open_panel(ctx, url=None):
     """用设置里选定的浏览器打开面板（默认系统浏览器）。"""
     url = url or ctx.hub_url()
     ok, message = browsers.open_url(url, ctx.settings, ctx.logger)
+    # modified: 2.6.1 把「实际用了哪个浏览器」写进日志。以前只回一句「已打开」，
+    # 设了 ego 却弹出 Edge 时日志里查不到任何线索，只能靠猜。
+    ctx.logger.act('打开面板：%s → %s' % (url, message))
     if not ok:
         ctx.logger.error('打开面板失败：%s' % message)
     return ok, message
@@ -138,8 +141,9 @@ def run_selftest(ctx):
         add('args 均为数组（单元素数组退化成字符串是旧版踩过的坑）', not bad_args, '异常：%s' % bad_args)
         ids = [s['id'] for s in services]
         add('id 无重复', len(ids) == len(set(ids)))
-        no_ver = [s['id'] for s in services if not s.get('version')]
-        no_upd = [s['id'] for s in services if not s.get('updated')]
+        # modified: registry 会把推不出的值填成 '—'，以前只判空，'—' 也算"有"，这条永远通过
+        no_ver = [s['id'] for s in services if not s.get('version') or s.get('version') == '—']
+        no_upd = [s['id'] for s in services if not s.get('updated') or s.get('updated') == '—']
         add('每条都有版本号与更新时间', not no_ver and not no_upd,
             '缺版本：%s；缺时间：%s' % (no_ver or '无', no_upd or '无'))
         bad_paths = []
@@ -152,10 +156,18 @@ def run_selftest(ctx):
                 bad_paths.append('%s(cwd)' % item['id'])
         add('每条的可执行文件与工作目录都存在', not bad_paths, '异常：%s' % (bad_paths or '无'))
 
+    # modified: 2.6.3 Windows 冷启动时，psutil 第一次枚举 600+ 进程的命令行要
+    # 预热 COM/WMI，本机实测约 20s，第二次仅 200~300ms。自检关心的是"每轮采集"
+    # 的稳态开销（后台线程按刷新间隔反复跑），先预热一次再计时；冷启动耗时单独
+    # 写进报告供排查，避免把一次性的系统预热误判成采集逻辑的性能故障。
+    cold = time.perf_counter()
+    ctx.monitor.refresh()
+    report.append('[INFO] 首次采集（含 psutil 冷预热）%.1f ms' %
+                  ((time.perf_counter() - cold) * 1000))  # modified
     began = time.perf_counter()
     ctx.monitor.refresh()
     cost = (time.perf_counter() - began) * 1000
-    add('采集一轮耗时 < 500ms', cost < 500, '%.1f ms' % cost)
+    add('稳态采集一轮耗时 < 500ms', cost < 500, '%.1f ms' % cost)  # modified
 
     view = ctx.monitor.view()['services']
     add('状态条目数与注册表一致', len(view) == len(services), '%d / %d' % (len(view), len(services)))
@@ -163,7 +175,8 @@ def run_selftest(ctx):
     for row in view:
         states[row['state']] = states.get(row['state'], 0) + 1
     add('状态判定完成', True, '；'.join('%s=%d' % kv for kv in states.items()))
-    fields = all(row.get('version') for row in view)
+    fields = all(row.get('version') and row.get('version') != '—'
+                 and row.get('updated') and row.get('updated') != '—' for row in view)  # modified
     add('状态行带版本/更新时间字段', fields)
     add('状态行带"未安装"标记', all('missing' in row for row in view))
     missing_rows = [row['id'] for row in view if row.get('missing')]
@@ -246,12 +259,17 @@ def run_selftest(ctx):
             add('跨站 POST 被拒绝', exc.code == 403, 'HTTP %d' % exc.code)
 
         server.shutdown()
+        server.server_close()  # modified: 把监听 socket 也关掉，自检进程别留半开端口
         add('HTTP 服务可正常关闭', True)
     except Exception as exc:
         add('HTTP 往返', False, repr(exc))
         if server is not None:
             try:
                 server.shutdown()
+            except Exception:
+                pass
+            try:
+                server.server_close()  # modified
             except Exception:
                 pass
 
@@ -326,6 +344,15 @@ def main(argv=None):
     parser.add_argument('--no-open', action='store_true', help='启动后不自动打开浏览器')
     parser.add_argument('--selftest', action='store_true', help='跑自检并打印报告')
     args = parser.parse_args(argv)
+    if not (1 <= args.port <= 65535):  # modified: 越界端口会在 bind 时抛 OverflowError，提前拦下
+        parser.error('--port 必须在 1-65535 之间')
+    if args.tries < 1:  # modified
+        parser.error('--tries 必须大于 0')
+    # modified: 2.6.3 只校验了起始端口，--port 65535 --tries 2 会让探测
+    # 循环走到 65536，socket.bind 抛 OverflowError（不是 OSError）导致启动崩溃。
+    tries = max(1, args.tries)
+    if args.port + tries - 1 > 65535:
+        parser.error('--port 加 --tries 的端口范围不能超过 65535')
 
     ctx = build_context()
 
@@ -335,7 +362,7 @@ def main(argv=None):
         ctx.logger.info('===== 自检结束，失败项 %d =====' % code)
         return code
 
-    port_range = (args.port, args.port + max(1, args.tries) - 1)
+    port_range = (args.port, args.port + tries - 1)
 
     existing = find_existing(*port_range)
     if existing:

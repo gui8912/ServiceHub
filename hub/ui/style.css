@@ -16,6 +16,11 @@
   --glass: rgba(255, 255, 255, .58);
   --glass-soft: rgba(255, 255, 255, .38);
   --glass-strong: rgba(255, 255, 255, .78);
+  /* modified: 卡片专用底色，比 --glass 更不透明。
+     卡片下垫的是已经 blur(90px) 的光斑，再做背板模糊观感增益几乎为零，
+     却要让 17 张卡片每帧重算一次大区域模糊 → 老内核/集显上表现为持续闪烁。
+     去掉模糊后靠这点不透明度补回层次，视觉差别很小（详见 .card 注释）。 */
+  --card-bg: rgba(255, 255, 255, .74);
   --glass-brd: rgba(255, 255, 255, .72);
   --glass-brd-2: rgba(23, 33, 31, .06);
   /* 弹窗、提示条这类"压在内容上面"的层，必须接近不透明：
@@ -61,6 +66,7 @@ html[data-theme="dark"] {
   --glass: rgba(26, 35, 37, .55);
   --glass-soft: rgba(26, 35, 37, .34);
   --glass-strong: rgba(30, 41, 43, .82);
+  --card-bg: rgba(26, 35, 37, .70);  /* modified: 卡片专用底色，见上方 :root 注释 */
   --glass-brd: rgba(255, 255, 255, .09);
   --glass-brd-2: rgba(255, 255, 255, .05);
   --float-bg: rgba(23, 31, 33, .97);
@@ -114,17 +120,33 @@ body {
   z-index: 0;
   background: linear-gradient(160deg, var(--bg) 0%, var(--bg-2) 100%);
 }
+/* modified: 这里刻意【不再用】filter: blur()。
+   原来每个光斑是 `filter: blur(90px)` + 无限 transform 动画。带 filter 的元素在部分
+   内核（实测 Edge，同为 Chromium 的 ego 却不复现）不会缓存模糊结果，动画期间会逐帧
+   重新栅格化这三大块，表现为整屏持续闪烁。改成径向渐变后，柔边是"画"出来的，不必再
+   算滤镜，动画只是图层位移，任何内核都是零成本合成，观感几乎一致。 */
 .blob {
   position: absolute;
   display: block;
   border-radius: 50%;
-  filter: blur(90px);
   opacity: .55;
   will-change: transform;
+  background: radial-gradient(closest-side,
+              var(--blob-c) 0%,
+              var(--blob-c) 34%,
+              transparent 100%);
 }
-.b1 { width: 46vw; height: 46vw; left: -10vw; top: -12vw; background: var(--blob-1); animation: drift1 26s ease-in-out infinite alternate; }
-.b2 { width: 40vw; height: 40vw; right: -8vw; top: 6vh; background: var(--blob-2); animation: drift2 32s ease-in-out infinite alternate; }
-.b3 { width: 38vw; height: 38vw; left: 26vw; bottom: -16vw; background: var(--blob-3); animation: drift3 38s ease-in-out infinite alternate; }
+.b1 { width: 46vw; height: 46vw; left: -10vw; top: -12vw; --blob-c: var(--blob-1); }
+.b2 { width: 40vw; height: 40vw; right: -8vw; top: 6vh; --blob-c: var(--blob-2); }
+.b3 { width: 38vw; height: 38vw; left: 26vw; bottom: -16vw; --blob-c: var(--blob-3); }
+
+/* modified: 光斑漂移默认【不播放】。
+   默认静止 = 首屏不可能闪，也不会出现"设置还没加载完就先动起来"的跳变。
+   想恢复"呼吸感"：设置面板 → 背景动效 → 开（会给 <html> 加 .bg-motion）。
+   实测 Edge + Intel 集显 + 高 DPI 下，这三个大图层一旦持续运动，整屏会闪。 */
+html.bg-motion .b1 { animation: drift1 26s ease-in-out infinite alternate; }
+html.bg-motion .b2 { animation: drift2 32s ease-in-out infinite alternate; }
+html.bg-motion .b3 { animation: drift3 38s ease-in-out infinite alternate; }
 .grain {
   position: absolute; inset: 0;
   opacity: var(--noise);
@@ -204,6 +226,15 @@ html[data-theme="dark"] .logo { color: #06231d; }
 .btn:hover { background: var(--glass-strong); border-color: var(--glass-brd); transform: translateY(-1px); }
 .btn:active { transform: translateY(0); }
 .btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+/* modified: 分组标题栏里的小号按钮，不抢视觉重量 */
+.btn.tiny { padding: 3px 10px; font-size: 11.5px; border-radius: 8px; }
+.btn.tiny:disabled { opacity: .4; cursor: default; transform: none; }
+/* modified: 顶栏「布局」按钮的激活态 */
+.btnLayout.active {
+  background: var(--accent-soft);
+  border-color: var(--ring);
+  color: var(--accent);
+}
 .btn.primary {
   background: linear-gradient(145deg, var(--accent), var(--accent-2));
   border-color: transparent;
@@ -332,51 +363,287 @@ html[data-theme="dark"] .icoMoon { display: block; }
 
 /* ------------------------------------------------------------------ 内容区 */
 .content { position: relative; z-index: 1; padding: 8px 24px 64px; }
-.group { margin-top: 18px; }
-.groupTitle {
+.group { margin-top: 20px; }
+/* modified: 2.4.0 分组标题栏——原来的纯文字标题换成可点（折叠）、可拖（换序）的整条栏，
+   并带上「N 项 · N 运行」和组内批量按钮。 */
+.groupHead {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   margin: 0 0 12px;
+  padding: 4px 2px 6px;
+  border-bottom: 1px solid var(--line);
   font-size: 12.5px;
+  letter-spacing: .04em;
+}
+.groupName {
+  color: var(--text);
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: .08em;
-  color: var(--muted);
-  text-transform: none;
+  white-space: nowrap;
+  /* modified: 2.4.2 组名左侧强调色条——多组扫视时定位更快 */
+  position: relative;
+  padding-left: 10px;
 }
-.groupTitle::after {
+.groupName::before {
   content: "";
-  flex: 1;
-  height: 1px;
-  background: linear-gradient(90deg, var(--line), transparent);
+  position: absolute;
+  left: 0; top: 2px; bottom: 2px;
+  width: 3px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
 }
-.groupTitle .count {
+.groupCount {
   font-weight: 400;
-  padding: 1px 8px;
+  letter-spacing: 0;
+  padding: 1px 9px;
   border-radius: 999px;
   background: var(--glass-soft);
   border: 1px solid var(--glass-brd);
-  letter-spacing: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
 }
+.groupCount b { color: var(--ok); font-weight: 600; }
+.groupActs { display: flex; gap: 6px; margin-left: auto; }
+.groupToggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform .18s ease, background .15s, color .15s;
+}
+.groupToggle:hover { background: var(--glass-strong); color: var(--text); }
+.group.collapsed .groupToggle { transform: rotate(-90deg); }
+.group.collapsed .groupHead { margin-bottom: 0; border-bottom-color: transparent; }
+.dragGrip {
+  display: none;
+  align-items: center;
+  padding: 0 1px;
+  color: var(--muted);
+  opacity: .5;
+}
+html.edit-mode .dragGrip { display: inline-flex; }
+html.edit-mode .groupHead { cursor: grab; }
+html.edit-mode .groupHead:hover { background: var(--glass-soft); border-radius: 8px; }
+html.edit-mode .group.dragging { opacity: .5; }
+html.edit-mode .group.dragging .groupHead { cursor: grabbing; }
+
+/* modified: 2.4.1 卡片拖拽。只在编辑模式下可拖，平时 cursor 保持默认，
+   否则鼠标划过每张卡都是抓手，看着像随时能拖坏。
+   落点提示用盒阴影画竖线，不插占位元素——占位会挤动 grid，光标底下的卡会跳走。 */
+html.edit-mode .cardSortable { cursor: grab; }
+html.edit-mode .cardSortable:active { cursor: grabbing; }
+.card.cardDragging { opacity: .45; cursor: grabbing; }
+/* modified: 2.4.2 修复——drop-before/drop-after 原来定义在这里（.card:hover 之前），
+   特异性相同被后者的 box-shadow 顶掉，拖动落点竖线提示从来就看不见。
+   两条目移到 .card:hover 之后并显式写 :hover 形态（见下方 modified 块）。 */
+.group.drop-end .grid {
+  outline: 2px dashed var(--accent);
+  outline-offset: 4px;
+  border-radius: 10px;
+}
+.group.drop-end.collapsed { outline: 2px dashed var(--accent); outline-offset: -2px; border-radius: 10px; }
+html.edit-mode .cardSortable button { cursor: pointer; }   /* 卡内按钮不跟着变抓手 */
 
 .grid {
   display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(auto-fill, minmax(318px, 1fr));
+  gap: 12px;
+  /* modified: 固定 4 列（原来是 auto-fill + minmax，1920 宽会自己涨到 6 列，
+     与「一行 4 张」的要求不符）。窄屏按断点退 3 / 2 / 1 列，见文件末尾响应式段。 */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: stretch;   /* modified: 原 start 是为 Bento 大小卡留层次；等宽后改成拉伸，同行卡片底边对齐 */
 }
 
+/* modified: 已停用 Bento 主卡（所有卡片等宽，一行 4 张）。
+   规则保留在这里，将来要恢复只需在 renderContent 里给某张卡传 hero=true。 */
+.card.is-hero { grid-column: span 2; }
+.card.is-hero .cardName { font-size: 17px; }
+.card.is-hero .cardDesc { -webkit-line-clamp: 3; }
+@media (max-width: 700px) {
+  .card.is-hero { grid-column: span 1; }
+}
+
+/* modified: 一次性脚本压成单行扁条——它们没有端口/运行时长，占一整张竖卡太浪费。
+   等宽四列下扁条也只占 1 列（不再跨 2 列），否则一行排不满、右边留空。 */
+.card.is-tool {
+  grid-column: span 1;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 12px;
+}
+.card.is-tool .cardHead { flex: 1 1 auto; min-width: 0; align-items: center; gap: 7px; }
+.card.is-tool .cardName {
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card.is-tool .pill { display: none; }   /* modified: 一次性脚本恒为「工具」，扁条里留这枚胶囊只是白占 50px 名称宽度 */
+.card.is-tool .cardId { display: none; }
+.card.is-tool .cardDesc { display: none; }
+.card.is-tool .cardVersion { display: none; }   /* modified: 2.5.1 扁条只留「运行」，版本号不进操作行 */
+.card.is-tool .cardMeta { display: none; }   /* modified: 只有「一次性脚本」一个信息，pill「工具」已表达 */
+.card.is-tool .cardActions { margin-left: auto; margin-top: 0; flex: 0 0 auto; gap: 4px; flex-wrap: nowrap; }
+.card.is-tool .cardActions .btn { padding: 4px 9px; font-size: 11.5px; }
+.card.is-tool .cardActions .linkBtn { font-size: 11.5px; padding: 4px 1px; }
+.card.is-tool .svcIcon { width: 24px; height: 24px; border-radius: 7px; font-size: 12px; }
+
+/* modified: 服务图标色块——首字 + 由 id 哈希决定的色相（--icon-h 由 JS 内联给出），
+   零图片资源。明暗两套各自取色，暗色下压暗底、提亮字，符合 WCAG 对比度。 */
+.svcIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  background: hsl(var(--icon-h, 166) 46% 91%);
+  color: hsl(var(--icon-h, 166) 52% 28%);
+  border: 1px solid hsl(var(--icon-h, 166) 38% 82%);
+}
+html[data-theme="dark"] .svcIcon {
+  background: hsl(var(--icon-h, 166) 26% 19%);
+  color: hsl(var(--icon-h, 166) 62% 74%);
+  border-color: hsl(var(--icon-h, 166) 24% 27%);
+}
+.card.is-hero .svcIcon { width: 38px; height: 38px; border-radius: 11px; font-size: 17px; }
+
+/* modified: 编辑模式下的「隐藏」按钮。平时 display:none，只有进布局编辑才出现，
+   避免日常点启动/停止时手滑把卡片弄没了。 */
+.eyeBtn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--float-bg);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.eyeBtn:hover { color: var(--danger); border-color: var(--danger); }
+html.edit-mode .eyeBtn { display: inline-flex; }
+/* modified: 2.4.2 虚线框只在悬停/拖动的卡上显示。
+   原来 edit-mode 下 17 张卡全是虚线框，满屏噪音；
+   眼睛按钮照常全量显示，"可隐藏"的暗示已经够了。 */
+html.edit-mode .card:hover,
+html.edit-mode .card.cardDragging { outline: 1px dashed var(--line); outline-offset: 2px; }
+
+/* modified: 已隐藏条——只在编辑模式出现，点一下就恢复 */
+.hiddenBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 22px;
+  padding: 12px 14px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--glass-soft);
+  font-size: 12px;
+}
+.hiddenLabel { color: var(--muted); }
+.hiddenChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-brd);
+  background: var(--card-bg);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.hiddenChip span { color: var(--accent); }
+.hiddenChip:hover { color: var(--text); border-color: var(--ring); }
+
+/* modified: 2.4.2 编辑模式下组末尾的空位占位——提示"可以拖到这里"。
+   只在编辑模式由 JS 生成（renderContent），平时不占任何空间。
+   悬停它触发 .group.drop-end 虚线框（dragover 走 overCard=null 分支），两者叠加强化提示。 */
+.dropSlot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 64px;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 11.5px;
+  opacity: .55;
+  pointer-events: none;   /* 别抢 dragover，让它穿到 section 上走 drop-end 逻辑 */
+}
+.group.drop-end .dropSlot {
+  opacity: 1;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* modified: 2.4.2 顶栏地址可点击复制 */
+.copyable {
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+  transition: color .15s, border-color .15s;
+}
+.copyable:hover { color: var(--accent); border-color: var(--accent); }
+
+/* modified: 2.5.0 分组管理——新建分组入口 + 改名/新建用的输入框 */
+.newGroupBox {
+  margin: 24px 0 10px;
+  display: flex;
+}
+.inputDlg {
+  width: 100%;
+  font: 14px/1.5 inherit;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(127, 127, 127, .07);
+  color: var(--text);
+  outline: none;
+}
+.inputDlg:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
+
 /* ------------------------------------------------------------------ 卡片 */
+/* modified: 这里刻意【不用】backdrop-filter。
+   原因：卡片正下方就是 .backdrop 里 3 个带 blur(90px)、且永久 drift 动画的光斑。
+   一旦卡片自己再挂 backdrop-filter，光斑每移动一个像素，浏览器就要把每张卡片
+   覆盖的那块区域重新采样、重新模糊一遍；17 张卡片 = 每秒 60 帧 × 17 次大区域
+   高斯模糊。集显、老内核（如部分 360/QQ 浏览器的旧 Chromium）扛不住，表现就是
+   卡片一直"闪来闪去"。而光斑本身已经是 90px 模糊的色团，再糊 22px 肉眼几乎无差，
+   属于纯开销零收益。改用略高不透明度的 --card-bg 保住"通透但不刺眼"的观感。 */
 .card {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 9px;
-  padding: 16px 18px 14px;
+  gap: 8px;
+  /* modified: 四列布局下列宽只有 236px，内距从 16/18 收到 13/14，
+     把省下的 9px 让给正文，说明文字不至于一行只剩六七个字。 */
+  padding: 13px 14px 12px;
   border-radius: var(--radius);
-  background: var(--glass);
+  background: var(--card-bg);  /* modified: 原 var(--glass)，配合去掉背板模糊 */
   border: 1px solid var(--glass-brd);
-  -webkit-backdrop-filter: blur(22px) saturate(160%);
-  backdrop-filter: blur(22px) saturate(160%);
   box-shadow: var(--shadow-1);
   transition: transform .18s ease, box-shadow .22s ease, background .22s;
   overflow: hidden;
@@ -392,14 +659,25 @@ html[data-theme="dark"] .icoMoon { display: block; }
 html[data-theme="dark"] .card::before { opacity: .22; }
 .card:hover { transform: translateY(-3px); box-shadow: var(--shadow-2); background: var(--glass-strong); }
 
-.cardHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+/* modified: 2.4.2 拖动落点竖线——必须定义在 .card:hover 之后且带上 :hover 形态。
+   拖动时鼠标必然悬停在目标卡上，两条同特异性规则里后定义的赢：
+   若放在 :hover 之前（原位置），竖线会被 hover 阴影顶掉而不可见。
+   hover 阴影用 --shadow-2 与日常悬停一致，只是左侧/右侧多一条强调色竖线。 */
+.card.drop-before, .card.drop-before:hover { box-shadow: -3px 0 0 0 var(--accent), var(--shadow-2); }
+.card.drop-after, .card.drop-after:hover { box-shadow: 3px 0 0 0 var(--accent), var(--shadow-2); }
+
+/* modified: 加了图标色块后，标题用 flex:1 顶开，状态胶囊和眼睛按钮靠右 */
+.cardHead { display: flex; align-items: flex-start; gap: 9px; }
 .cardName {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 15.5px;
   font-weight: 700;
   line-height: 1.36;
   letter-spacing: .01em;
   word-break: break-word;
 }
+.cardHead .pill { flex: 0 0 auto; }
 .cardId {
   display: inline-block;
   margin-left: 7px;
@@ -434,35 +712,41 @@ html[data-theme="dark"] .card::before { opacity: .22; }
 .cardMeta .dot { width: 3px; height: 3px; border-radius: 50%; background: currentColor; opacity: .45; }
 .cardMeta b { color: var(--text); font-weight: 600; }
 
-.cardVer {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  padding-top: 9px;
-  border-top: 1px dashed var(--line);
-  color: var(--muted);
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-}
-.cardVer span { display: inline-flex; align-items: center; gap: 4px; }
-.cardVer code {
-  font: 11.5px/1.4 Consolas, "Cascadia Mono", monospace;
+/* modified: 2.5.1 版本号与操作按钮并成一行——原来的 .cardVer 独占一行
+   （9px 上距 + 虚线上边框 + 1 行文字 ≈ 30px），去掉后每张卡矮 30px，
+   四列布局一屏能多显示近一排卡片。版本号缩小成右侧一枚淡色小标签，
+   「更新于 xx」不再单独占位，改由 title 悬停提示（列表视图仍有更新时间列）。 */
+.cardVersion {
+  margin-left: auto;           /* 靠右，按钮从左起排 */
+  flex: 0 0 auto;
+  max-width: 46%;              /* 版本号过长时省略，不把按钮挤到第二行 */
   padding: 1px 6px;
   border-radius: 5px;
-  background: var(--accent-soft);
-  color: var(--accent);
+  border: 1px solid var(--glass-brd);
+  background: var(--glass-soft);
+  color: var(--muted);
+  font: 10.5px/1.55 Consolas, "Cascadia Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.cardActions { display: flex; align-items: center; gap: 8px; margin-top: 2px; flex-wrap: wrap; }
-.cardActions .btn { padding: 6px 12px; font-size: 12.5px; }
+/* modified: 2.5.1 操作行现在装「停止 / 重启 / 打开网页 + 版本号」四项。
+   四列下列宽 236px、内容区约 208px，所以按钮再收一档（字号 11.5、左右内距 8），
+   腾出右侧约 45px 给版本号；flex-wrap 保留作兜底，只会换成两行、不会溢出卡片。
+   margin-top:auto 让操作区始终贴卡片底部——同行等高时按钮才会对齐，
+   留白落在描述与按钮之间，不会出现「按钮悬在中间、下面一大块空」。 */
+.cardActions { display: flex; align-items: center; gap: 5px; margin-top: auto; padding-top: 2px; flex-wrap: wrap; }
+.cardActions .btn { padding: 4px 8px; font-size: 11.5px; }
 .linkBtn {
   appearance: none;
   border: 0;
   background: none;
   color: var(--muted);
   font-family: inherit;
-  font-size: 12.5px;
-  padding: 6px 2px;
+  font-size: 12px;
+  padding: 5px 2px;
   cursor: pointer;
   border-bottom: 1px dashed transparent;
   transition: color .16s, border-color .16s;
@@ -490,10 +774,16 @@ html[data-theme="dark"] .card::before { opacity: .22; }
   box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 16%, transparent);
 }
 .pill.run { background: var(--ok-bg); color: var(--ok); }
-.pill.run::before { animation: pulse 2.4s ease-in-out infinite; }
+/* modified: 2.4.2 运行中圆点默认【静态】。它是全页唯一常驻动画，
+   虽然只是 6px 圆点的 opacity，鉴于闪屏前科还是默认静止；
+   悬停到卡片/表格行时才脉动一下，保留"活的"反馈。 */
+.card:hover .pill.run::before,
+.svcTable tbody tr:hover .pill.run::before { animation: pulse 2.4s ease-in-out infinite; }
 .pill.external { background: var(--ext-bg); color: var(--ext); }
 .pill.starting { background: var(--warn-bg); color: var(--warn); }
 .pill.starting::before { animation: pulse 1s ease-in-out infinite; }
+/* modified: 2.6.2 端口被别的程序占着 —— 红色，和"启动中"的黄色区分开 */
+.pill.conflict { background: var(--danger-bg); color: var(--danger); }
 .pill.tool { background: var(--tool-bg); color: var(--tool); }
 /* 未安装：可执行文件不在本机（换电脑后旧路径失效），用灰调而不是红色警告 */
 .pill.missing { background: rgba(127, 127, 127, .14); color: var(--muted); }
@@ -674,6 +964,9 @@ html[data-theme="dark"] .card::before { opacity: .22; }
   gap: 8px;
   justify-content: flex-end;
 }
+/* modified: display:flex 会盖掉浏览器对 hidden 的默认 display:none，
+   设置弹窗底部会残留上一次的"刷新日志"按钮。显式补一条。 */
+.modalFoot[hidden] { display: none; }
 
 /* 设置面板 */
 .setGroup { margin-bottom: 6px; }
@@ -697,6 +990,16 @@ html[data-theme="dark"] .card::before { opacity: .22; }
 .setMain { min-width: 0; }
 .setLabel { font-size: 13px; font-weight: 600; }
 .setHint { color: var(--muted); font-size: 11.5px; line-height: 1.55; margin-top: 2px; }
+/* modified: 2.6.1 设置页显示「实际会用哪个浏览器」，退回系统默认时变红字提醒 */
+.setResolved {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.55;
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+.setResolved.warn { color: var(--warn); }
 .setCtrl { flex: none; display: flex; align-items: center; gap: 8px; }
 .setCtrl select, .setCtrl input[type="text"] {
   appearance: none;
@@ -763,8 +1066,47 @@ html[data-theme="dark"] .setCtrl select {
 .aboutGrid b { display: block; color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; word-break: break-all; }
 .pathLine { grid-column: 1 / -1; margin-top: 4px; color: var(--muted); font-size: 11px; word-break: break-all; font-family: Consolas, monospace; }
 
+/* ------------------------------------------------------------------ 密度（2.4.0 新增）
+   舒适 = 等宽四列、说明两行、显示版本行（默认）；
+   紧凑 = 同样四列，只收紧间距、说明压一行、隐去版本行。
+   两档都固定 4 列，切换密度时网格不会忽多忽少地跳。
+   切换只给 <html> 加一个类，规则全集中在这里，业务逻辑零改动。 */
+html.density-compact .grid {
+  gap: 9px;
+}
+html.density-compact .card {
+  gap: 7px;
+  padding: 12px 13px 11px;
+  border-radius: 14px;
+}
+html.density-compact .cardDesc { -webkit-line-clamp: 1; min-height: 0; }
+html.density-compact .cardActions { gap: 5px; }
+html.density-compact .cardActions .btn { padding: 3px 8px; font-size: 11.5px; }
+html.density-compact .cardVersion { font-size: 10px; padding: 0 5px; }   /* modified: 2.5.1 版本号并入操作行，紧凑模式下再压一档 */
+html.density-compact .svcIcon { width: 24px; height: 24px; border-radius: 7px; font-size: 12px; }
+html.density-compact .cardName { font-size: 13.5px; }
+html.density-compact .group { margin-top: 14px; }
+html.density-compact .groupHead { margin-bottom: 8px; }
+
+/* ------------------------------------------------------------------ 设置面板：已隐藏卡片 */
+.hiddenManage { display: flex; flex-direction: column; gap: 7px; min-width: 210px; }
+.hiddenManageRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+.hiddenNone { color: var(--muted); font-size: 12.5px; }
+
 /* ------------------------------------------------------------------ 响应式 */
+/* modified: 卡片网格固定 4 列，窄屏逐级退让。
+   1180 以下是笔记本半屏 / 平板横屏，4 列每列不足 250px 会把标题压成三行。 */
+@media (max-width: 1180px) {
+  .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 @media (max-width: 860px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .topbar { margin: 8px 10px 0; padding: 10px 12px; gap: 10px; }
   .content, .toolbar { padding-left: 12px; padding-right: 12px; }
   .brandText h1 { font-size: 16px; }
@@ -785,9 +1127,56 @@ html[data-theme="dark"] .setCtrl select {
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+/* ------------------------------------------------------------------ 渲染诊断模式
+   用于定位"界面一直在闪"的来源。地址栏加参数即可，去掉参数完全不影响日常外观：
+     ?fx=noanim  只停背景光斑动画
+     ?fx=noblur  只关毛玻璃
+     ?fx=off     两样都停（此时页面应当彻底静止）
+   三个都试一遍，哪个不闪了，原因就是哪一个。 */
+html.fx-noanim .blob,
+html.fx-off .blob {
+  animation: none !important;
+}
+html.fx-noblur .glass,
+html.fx-noblur .searchWrap,
+html.fx-noblur .modalMask,
+html.fx-noblur .modal,
+html.fx-noblur .toast,
+html.fx-off .glass,
+html.fx-off .searchWrap,
+html.fx-off .modalMask,
+html.fx-off .modal,
+html.fx-off .toast {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+/* 关掉毛玻璃后必须有底色兜底，否则文字直接糊在背景光斑上，比闪更难看清 */
+html.fx-noblur .glass,
+html.fx-off .glass,
+html.fx-noblur .searchWrap,
+html.fx-off .searchWrap {
+  background: var(--bg-2);
+}
+
+.fxBadge {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  z-index: 999;
+  padding: 7px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--accent-ink);
+  background: var(--accent);
+  box-shadow: var(--shadow-2);
+  pointer-events: none;
+}
+
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  .glass, .card, .svcTable td, .modal, .toast, .searchWrap { background: var(--bg-2); }
+  /* modified: .card 已不再使用 backdrop-filter，从降级名单里移除，
+     否则不支持毛玻璃的浏览器会把卡片压成完全不透明，白丢 --card-bg 的通透感 */
+  .glass, .svcTable td, .modal, .toast, .searchWrap { background: var(--bg-2); }
   html[data-theme="dark"] .glass,
-  html[data-theme="dark"] .card,
   html[data-theme="dark"] .svcTable td { background: #1a2325; }
 }

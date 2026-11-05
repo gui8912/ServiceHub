@@ -1,30 +1,26 @@
 {
   "version": 1,
-  "updated": "2026-10-31",
+  "updated": "2026-11-02",
   "note": "服务注册表。新增服务只需在此文件追加一条，工作台最多 1 秒后自动看到，无需改代码（ServiceHub.py / 2026-10-31 起为 Python 版）。kind: proc=工作台拉起并管理进程, tool=一次性脚本(只运行不常驻)。Docker 容器不再纳入本工作台（2026-10-31 按用户要求移除），需要时用 Docker Desktop 管理。args 必须是数组；不需要参与\"全部启动\"的桌面 GUI 工具请加 \"autostart\": false；有风险的动作加 \"confirm\": \"提示语\"，网页会先弹确认。version 可手写（不写则从 package.json/version.txt 推断），updated 不写则取目录里最新的文件修改时间。",
   "services": [
     {
       "id": "docscan",
       "name": "澄文扫描台",
       "group": "自建应用",
-      "desc": "PDF 扫描件去黑边/去折痕/去红头/导出，网页版",
+      "desc": "PDF 扫描件漂白/保色/成册：1bit 无损+印章掩膜、方向性断笔接续（公文·仿宋档）、导出沿用源名可覆盖、参数自动记忆、服务边界加固",
       "kind": "proc",
       "cwd": "D:\\Tools\\服务台\\apps\\docscan",
-      "exe": "C:\\Users\\guiker\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "exe": "C:\\Program Files\\nodejs\\node.exe",
       "args": [
-        "-m",
-        "http.server",
-        "8765",
-        "--bind",
-        "127.0.0.1"
+        "serve.js"
       ],
-      "marker": "http.server 8765",
+      "marker": "serve.js",
       "health": "port",
       "port": 8765,
       "url": "http://127.0.0.1:8765/",
       "urlPattern": null,
       "stopMode": "pid",
-      "version": "2.4.0"
+      "version": "2.4.7"
     },
     {
       "id": "asr-pipeline",
@@ -37,13 +33,14 @@
       "args": [
         "server.py"
       ],
-      "marker": null,
+      "marker": "server.py",
       "health": "port",
       "port": 7870,
       "url": "http://127.0.0.1:7870/",
       "urlPattern": null,
       "stopMode": "pid",
-      "version": "1.0"
+      "version": "1.2",
+      "updated": "2026-11-05"
     },
     {
       "id": "rename-cn",
@@ -62,7 +59,7 @@
       "url": null,
       "urlPattern": "http://127\\.0\\.0\\.1:(\\d+)",
       "stopMode": "pid",
-      "version": "1.0.0"
+      "version": "1.2.0"
     },
     {
       "id": "ocr-local",
@@ -80,6 +77,7 @@
       "marker": null,
       "health": "port",
       "port": 8111,
+      "web": true,
       "url": null,
       "urlPattern": null,
       "stopMode": "pid",
@@ -90,7 +88,7 @@
       "name": "佳能扫描助手",
       "group": "桌面工具",
       "desc": "C3525 III 图形界面：选项一次勾选、扫描后 SMB 推送",
-      "kind": "proc",
+      "kind": "tool",
       "cwd": "D:\\Tools\\ScanInbox",
       "exe": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       "args": [
@@ -117,7 +115,7 @@
       "name": "NAPS2 扫描仪",
       "group": "桌面工具",
       "desc": "便携版扫描客户端（与佳能扫描助手二选一，配置在程序目录 Data 里）",
-      "kind": "proc",
+      "kind": "tool",
       "cwd": "D:\\Tools\\NAPS2app",
       "exe": "D:\\Tools\\NAPS2app\\NAPS2.Portable.exe",
       "args": [],
@@ -134,28 +132,29 @@
       "id": "wxlive",
       "name": "视频号录制器",
       "group": "桌面工具",
-      "desc": "视频号直播/回放下载器，bridge 服务在 18002",
+      "desc": "视频号直播/回放 + m3u8 下载器，网页界面 8766，bridge 服务在 18002",
       "kind": "proc",
       "cwd": "D:\\Tools\\服务台\\apps\\wxlive-recorder",
       "exe": "C:\\Users\\guiker\\AppData\\Local\\Programs\\Python\\Python312\\pythonw.exe",
       "args": [
-        "wxlive_recorder.py"
+        "wxlive_recorder.py",
+        "--no-browser"
       ],
       "marker": "wxlive_recorder.py",
-      "health": "cmdline",
-      "port": null,
-      "url": null,
+      "health": "port",
+      "port": 8766,
+      "url": "http://127.0.0.1:8766/",
       "urlPattern": null,
       "stopMode": "pid",
       "autostart": false,
-      "version": "1.0"
+      "version": "5.7.1"
     },
     {
       "id": "weknora-import",
       "name": "WeKnora 导入助手",
       "group": "桌面工具",
       "desc": "双击文件批量入库归档，走系统 Python 3.12 的 tkinter",
-      "kind": "proc",
+      "kind": "tool",
       "cwd": "D:\\WorkBuddy\\weknora",
       "exe": "C:\\Users\\guiker\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
       "args": [

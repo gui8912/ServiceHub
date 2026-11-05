@@ -103,12 +103,22 @@ def _read_registry():
             low = name.lower()
             if any(part in low for part in SKIP_NAME_PARTS):
                 continue                      # copilot / Electron 壳之类的"伪浏览器"
+            cmd_key = None
             try:
                 cmd_key = winreg.OpenKey(
                     hive, base + '\\' + name + r'\shell\open\command')
                 cmd = winreg.QueryValueEx(cmd_key, '')[0]
             except Exception:
                 continue
+            finally:
+                # modified: 2.6.3 外层 key 关了，循环里每个子项打开的
+                # cmd_key 却从没关。discover(force=True) 每次都泄漏一批 HKEY，
+                # 浏览器短暂找不到时设置页会反复触发全量重扫。
+                if cmd_key is not None:
+                    try:
+                        winreg.CloseKey(cmd_key)
+                    except Exception:
+                        pass
             exe = _exe_from_command(cmd)
             if exe and os.path.exists(exe):
                 found.append((name, exe))
@@ -127,12 +137,8 @@ def _slug(exe):
     return re.sub(r'[^a-z0-9_-]+', '-', base) or 'browser'
 
 
-def discover(force=False):
-    """返回已安装浏览器列表 [{id, name, path, source}]，去重且稳定排序。"""
-    with _cache_lock:
-        if not force and _cache['list'] and (time.time() - _cache['at']) < CACHE_SECONDS:
-            return [dict(item) for item in _cache['list']]
-
+def _scan():
+    """扫一遍已装浏览器（调用方持 _cache_lock）。  # modified: 2.6.3 从 discover 抽出"""
     items = []
     seen = set()
 
@@ -156,11 +162,23 @@ def discover(force=False):
 
     order = {bid: idx for idx, (bid, _n, _p) in enumerate(KNOWN)}
     items.sort(key=lambda it: (order.get(it['id'], 99), it['name'].lower()))
+    return items
 
+
+def discover(force=False):
+    """返回已安装浏览器列表 [{id, name, path, source}]，去重且稳定排序。"""
+    # modified: 2.6.3 原来"检查缓存"和"扫描+写回"分持两段锁，两个线程
+    # 同时过期会各扫一遍并互相覆盖；空结果（一个浏览器都没探到）又永远
+    # 不算命中缓存，每次调用都全量扫注册表。现在整段在一把锁里完成，
+    # 用 at>0 区分"没扫过"和"扫过但结果为空"。
     with _cache_lock:
+        if (not force and _cache['at'] > 0
+                and (time.time() - _cache['at']) < CACHE_SECONDS):
+            return [dict(item) for item in _cache['list']]
+        items = _scan()
         _cache['at'] = time.time()
         _cache['list'] = [dict(it) for it in items]
-    return items
+        return items
 
 
 def find(browser_id):
@@ -170,48 +188,143 @@ def find(browser_id):
     return None
 
 
-def resolve(settings):
-    """把设置解析成要用的浏览器：('auto', '') 或 (id, exe)。"""
-    bid = (settings.get('browser') or 'auto').strip()
+def resolve_info(settings):
+    """把设置解析成「到底会用哪个浏览器」，连同退回原因一起给出。
+
+    modified: 2.6.1 新增。原来只有 resolve() 返回 (id, exe)，一旦设置里选的浏览器
+    没被探测到（ego 自更新时 Application\\ego.exe 会短暂消失），就静默退回系统默认，
+    界面上只看到「已打开」，用户根本不知道用的是 Edge、更不知道为什么。
+    这里把「用谁 / 为什么退回」显式化，供提示、日志和设置页共用。
+
+    返回 dict：
+      mode    auto | custom | known | missing
+      id      设置里记的浏览器 id（auto/custom 时同 mode）
+      name    给人看的名字（ego lite / 系统默认浏览器 / chrome.exe）
+      path    实际要执行的 exe（auto 时为空）
+      reason  空=正常；非空=为什么要退回系统默认
+    """
+    info = {'mode': 'auto', 'id': 'auto', 'name': '系统默认浏览器',
+            'path': '', 'reason': '', 'fallback': False}
+    if settings is None:  # 调用方漏传设置时按系统默认处理，别抛 AttributeError
+        return info
+    # modified: 2.6.3 设置里混进 1 / true / dict（或第三方直接调接口）时，
+    # .strip() 会抛 AttributeError → /api/browser/test 必现 500。
+    # 非字符串按"没配"处理，与 settings._as_text 的语义一致。
+    def _text(value, fallback=''):
+        return value.strip() if isinstance(value, str) else fallback
+
+    bid = _text(settings.get('browser'), 'auto') or 'auto'
+    path_setting = _text(settings.get('browser_path'))
+
     if bid == 'auto':
-        return 'auto', ''
+        return info
     if bid == 'custom':
-        path = (settings.get('browser_path') or '').strip()
-        return ('custom', path) if path else ('auto', '')
+        if not path_setting:
+            info['mode'] = 'custom'
+            info['id'] = 'custom'
+            info['reason'] = '选了「自定义路径」但路径是空的'
+            return info
+        info.update({'mode': 'custom', 'id': 'custom', 'path': path_setting,
+                     'name': os.path.basename(path_setting) or '自定义浏览器'})
+        if not os.path.exists(path_setting):
+            info['reason'] = '自定义浏览器路径不存在：%s' % path_setting
+        return info
+
     item = find(bid)
+    if not item:
+        # modified: 缓存只有 5 秒，但浏览器正好在自更新时可能瞬间探不到。
+        # 先强制重扫一次，别因为一次偶然的空结果就把用户踢回 Edge。
+        discover(force=True)
+        item = find(bid)
     if item:
-        return item['id'], item['path']
-    # 设置里记的浏览器被卸载了：退回自定义路径，再退回系统默认
-    path = (settings.get('browser_path') or '').strip()
-    return ('custom', path) if path else ('auto', '')
+        info.update({'mode': 'known', 'id': item['id'], 'name': item['name'], 'path': item['path']})
+        return info
+
+    # 设置里记的浏览器被卸载/正在更新：还有自定义路径就用它，否则退回系统默认
+    if path_setting:
+        info.update({'mode': 'custom', 'id': 'custom', 'path': path_setting,
+                     'name': os.path.basename(path_setting) or '自定义浏览器'})
+        info['reason'] = '没找到设置里选的浏览器「%s」，先用自定义路径' % bid
+        return info
+    info.update({'mode': 'missing', 'id': bid, 'name': bid})
+    info['reason'] = '没找到设置里选的浏览器「%s」（可能正在更新或已卸载）' % bid
+    return info
+
+
+def resolve(settings):
+    """兼容旧调用：把设置解析成 (id, exe)。需要退回原因请用 resolve_info()。"""
+    info = resolve_info(settings)
+    if info['mode'] == 'auto' or not info['path']:
+        return 'auto', ''
+    return info['id'], info['path']
+
+
+def _default_browser(url, logger):
+    """退回系统默认浏览器。返回 (ok, 错误信息)。"""
+    try:
+        # modified: 2.6.3 webbrowser.open() 失败时返回 False 而不一定抛异常，
+        # 原来一律当成成功，界面显示"已打开"、实际什么都没弹出来。
+        opened = webbrowser.open(url)
+    except Exception as exc:
+        logger.error('系统默认浏览器打开失败：%r' % exc)
+        return False, str(exc)
+    if not opened:
+        logger.warn('系统默认浏览器未能打开 %s' % url)
+        return False, '系统默认浏览器未能打开（webbrowser.open 返回 False）'
+    return True, ''
+
+
+def open_url_ex(url, settings, logger, force_auto=False):
+    """用用户选定的浏览器打开网址。返回 (ok, message, info)。
+
+    modified: 2.6.1 消息里始终带上「实际用了哪个浏览器」，退回系统默认时明确写出来。
+    以前无论走哪条路都只回「已打开」，前端 toast 又把 message 换成「已打开 URL」，
+    于是「设置的是 ego、看到的是 Edge」这种情况完全没有线索。
+    """
+    info = {'mode': 'auto', 'id': 'auto', 'name': '系统默认浏览器',
+            'path': '', 'reason': '', 'fallback': False}
+    if not url:
+        return False, '没有可打开的网址', info
+    if not force_auto:
+        info = resolve_info(settings)
+        info['fallback'] = False
+    reason = info.get('reason') or ''
+    if reason:
+        logger.warn(reason)
+
+    # 1) 明确要用某个 exe
+    if info.get('path'):
+        exe, name = info['path'], info['name']
+        if not os.path.exists(exe):
+            info['fallback'] = True
+            ok, err = _default_browser(url, logger)
+            if not ok:
+                return False, '打不开网页：%s' % err, info
+            return True, '⚠ 找不到 %s（%s），已改用系统默认浏览器打开 %s' % (name, exe, url), info
+        try:
+            # modified: 2.6.3 自定义路径指向 .bat/控制台程序时别弹黑框
+            subprocess.Popen([exe, url], close_fds=True,
+                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            return True, '已用 %s 打开 %s' % (name, url), info
+        except Exception as exc:
+            logger.error('调用 %s 失败：%r' % (exe, exc))
+            info['fallback'] = True
+            ok, err = _default_browser(url, logger)
+            if not ok:
+                return False, '用 %s 打开失败：%s' % (name, err), info
+            return True, '⚠ 用 %s 打开失败（%s），已改用系统默认浏览器打开 %s' % (name, exc, url), info
+
+    # 2) 系统默认
+    ok, err = _default_browser(url, logger)
+    if not ok:
+        return False, '打不开网页：%s' % err, info
+    if reason:
+        info['fallback'] = True
+        return True, '⚠ %s，已改用系统默认浏览器打开 %s' % (reason, url), info
+    return True, '已用系统默认浏览器打开 %s' % url, info
 
 
 def open_url(url, settings, logger, force_auto=False):
     """用用户选定的浏览器打开网址。返回 (ok, message)。"""
-    if not url:
-        return False, '没有可打开的网址'
-    bid, exe = ('auto', '') if force_auto else resolve(settings)
-    if bid == 'auto' or not exe:
-        try:
-            webbrowser.open(url)
-            return True, '已用系统默认浏览器打开'
-        except Exception as exc:
-            logger.error('系统默认浏览器打开失败：%r' % exc)
-            return False, '打不开网页：%s' % exc
-    if not os.path.exists(exe):
-        logger.warn('浏览器不存在（%s），改用系统默认' % exe)
-        try:
-            webbrowser.open(url)
-            return True, '指定的浏览器不在了，已用系统默认浏览器打开'
-        except Exception as exc:
-            return False, '打不开网页：%s' % exc
-    try:
-        subprocess.Popen([exe, url], close_fds=True)
-        return True, '已用 %s 打开' % os.path.basename(exe)
-    except Exception as exc:
-        logger.error('调用 %s 失败：%r' % (exe, exc))
-        try:
-            webbrowser.open(url)
-            return True, '指定浏览器调用失败，已用系统默认浏览器打开'
-        except Exception:
-            return False, '打不开网页：%s' % exc
+    ok, message, _info = open_url_ex(url, settings, logger, force_auto=force_auto)
+    return ok, message

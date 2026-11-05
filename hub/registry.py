@@ -31,6 +31,8 @@ def _norm_args(raw):
         return []
     if isinstance(raw, str):
         return [a for a in raw.split() if a]
+    if not isinstance(raw, (list, tuple)):  # modified: 写成对象/数字时不再逐键拆成参数
+        return []
     return [str(a) for a in raw]
 
 
@@ -62,23 +64,32 @@ class Registry:
         """
         if not isinstance(local, dict):
             return cfg
-        base = cfg.setdefault('services', [])
+        # modified: 2.6.3 原来在 load() 的类型校验之前就对数组元素 .get('id')：
+        # services.json / local 里混进一个字符串就抛 AttributeError，整轮
+        # 采集停帧、/api/status 直接 500。先在这里把两边都过滤干净。
+        main = cfg.get('services')
+        cfg['services'] = ([s for s in main if isinstance(s, dict)]
+                           if isinstance(main, list) else [])
+        raw_local = local.get('services')
+        local_items = ([x for x in raw_local if isinstance(x, dict)]
+                       if isinstance(raw_local, list) else [])
         if local.get('mode') == 'replace':
-            cfg['services'] = list(local.get('services') or [])
+            cfg['services'] = list(local_items)
             if local.get('groups'):
                 cfg['groups'] = local['groups']
             self.logger.ok('已按 services.local.json 全量替换清单')
             return cfg
-        drop = {str(x) for x in (local.get('remove') or [])}
+        drop_raw = local.get('remove')
+        drop = {str(x) for x in drop_raw} if isinstance(drop_raw, (list, tuple)) else set()
         if drop:
             before = len(cfg['services'])
             cfg['services'] = [s for s in cfg['services'] if s.get('id') not in drop]
             self.logger.ok('services.local.json 隐藏了 %d 条服务' % (before - len(cfg['services'])))
         by_id = {s.get('id'): s for s in cfg['services']}
         added = 0
-        for item in local.get('services') or []:
+        for item in local_items:
             sid = item.get('id')
-            if not sid:
+            if not isinstance(sid, str) or not sid.strip():
                 continue
             if sid in by_id:
                 by_id[sid].update(item)
@@ -91,6 +102,12 @@ class Registry:
         return cfg
 
     def load(self, force=False):
+        # modified: 2.6.3 self.lock 定义了却从没用过：后台采集线程与 HTTP
+        # 线程会在 mtime 变化时同时重读、互相覆盖 _cfg。整段串行化。
+        with self.lock:
+            return self._load(force)
+
+    def _load(self, force=False):
         try:
             stamp = (os.path.getmtime(self.path),
                      os.path.getmtime(self.local_path) if os.path.exists(self.local_path) else 0)
@@ -115,11 +132,22 @@ class Registry:
         if local:
             cfg = self._apply_local(cfg, local)
         services = []
-        for idx, item in enumerate(cfg.get('services', [])):
-            if not item.get('id'):
-                self.logger.warn('第 %d 条服务缺 id，已跳过' % (idx + 1))
+        raw_services = cfg.get('services', [])
+        if not isinstance(raw_services, list):  # modified: 顶层写坏时不让 load() 抛异常
+            self.logger.error('services 必须是数组，已按空清单处理：%s' % type(raw_services).__name__)
+            raw_services = []
+        for idx, item in enumerate(raw_services):
+            if not isinstance(item, dict):  # modified: 数组里混进字符串/数字时跳过
+                self.logger.warn('第 %d 条服务不是对象，已跳过：%s' % (idx + 1, type(item).__name__))
+                continue
+            sid = item.get('id')
+            # modified: 2.6.3 数字 id 会渲染出卡片，但前端传回来的是字符串，
+            # registry.get() 的 == 永远不成立，启停全部回"没有这个服务"。
+            if not isinstance(sid, str) or not sid.strip():
+                self.logger.warn('第 %d 条服务缺 id 或 id 不是字符串，已跳过' % (idx + 1))
                 continue
             svc = dict(item)
+            svc['id'] = sid.strip()
             svc['args'] = _norm_args(svc.get('args'))
             svc.setdefault('name', svc['id'])
             svc.setdefault('group', '未分组')

@@ -69,6 +69,11 @@ if /i "%~1"=="--selftest" (
 
 rem Start the resident hub. The hub opens the panel itself with the configured
 rem browser, so this script must not run "start http://..." (double tab).
+rem modified: remember and clear stale port.txt first; a crashed previous run
+rem otherwise makes this script report an old port immediately.
+set "OLDPORT="
+if exist "%~dp0runtime\port.txt" set /p OLDPORT=<"%~dp0runtime\port.txt"
+if exist "%~dp0runtime\port.txt" del /q "%~dp0runtime\port.txt" >nul 2>nul
 start "ServiceHub" "%PYW%" "%~dp0ServiceHub.py" --port 9500
 
 rem Wait at most 15 seconds for runtime\port.txt as a liveness check
@@ -85,7 +90,14 @@ if defined HUBPORT (
   echo ServiceHub is running on port %HUBPORT%.
   echo If the panel did not open, visit http://127.0.0.1:%HUBPORT%/
 ) else (
-  echo [WARN] Hub did not report a port in 15 seconds.
-  echo Check logs\hub-*.log, or run this file with:  --selftest
+  rem modified: an existing instance does not rewrite port.txt; restore it and say so.
+  if defined OLDPORT (
+    >"%~dp0runtime\port.txt" echo %OLDPORT%
+    echo [WARN] No new port reported. ServiceHub may already be running on port %OLDPORT%.
+    echo Open http://127.0.0.1:%OLDPORT%/ in your browser.
+  ) else (
+    echo [WARN] Hub did not report a port in 15 seconds.
+    echo Check logs\hub-*.log, or run this file with:  --selftest
+  )
 )
 exit /b 0

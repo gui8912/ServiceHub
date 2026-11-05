@@ -29,7 +29,7 @@ def _newest_mtime(folder):
     try:
         with os.scandir(folder) as entries:
             for idx, entry in enumerate(entries):
-                if idx > SCAN_LIMIT:
+                if idx >= SCAN_LIMIT:  # modified: 原来 > 会多看一个，改成 >= 与注释一致
                     break
                 try:
                     if entry.is_file(follow_symlinks=False):
